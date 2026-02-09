@@ -51,20 +51,30 @@ class JobSyncAutomation:
             res = requests.get(url, headers=self.notion_headers)
             if res.status_code == 200:
                 data = res.json()
-                # Version 2025-09-03 uses 'data_sources' array of objects
-                sources = data.get('data_sources', [])
-                if sources:
-                    self.data_source_id = sources[0].get('id')
-                    print(f"🔗 Linked to Notion Data Source: {self.data_source_id} ({sources[0].get('name')})")
+                
+                # Try multiple possible property names based on API versions
+                sources = data.get('data_sources') or data.get('child_data_source_ids')
+                
+                if sources and len(sources) > 0:
+                    # If it's the new data_sources array of objects
+                    if isinstance(sources[0], dict):
+                        self.data_source_id = sources[0].get('id')
+                        name = sources[0].get('name', 'Unknown')
+                    # If it's a simple list of IDs (child_data_source_ids)
+                    else:
+                        self.data_source_id = sources[0]
+                        name = "Legacy/Direct"
+                        
+                    print(f"🔗 Linked to Notion Source: {self.data_source_id} ({name})")
                 else:
                     self.data_source_id = DATABASE_ID
-                    print(f"✅ Database is single-source or legacy. Using DATABASE_ID.")
+                    print(f"✅ Normal database detected. Using DATABASE_ID.")
             else:
-                print(f"⚠️ Could not fetch Notion database info ({res.status_code}). Falling back to DATABASE_ID.")
+                print(f"⚠️ Could not fetch Notion info ({res.status_code}). Response: {res.text[:200]}")
                 self.data_source_id = DATABASE_ID
             sys.stdout.flush()
         except Exception as e:
-            print(f"⚠️ Notion init error: {str(e)}")
+            print(f"⚠️ Notion discovery exception: {str(e)}")
             self.data_source_id = DATABASE_ID
 
     def get_gmail_creds(self):
