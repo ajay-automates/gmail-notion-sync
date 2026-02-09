@@ -30,7 +30,7 @@ DATABASE_ID = os.getenv("DATABASE_ID")
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 # Search query to find job application, rejection, and interview emails
-GMAIL_SEARCH_QUERY = 'subject:(application OR "thank you for applying" OR "received your application" OR "applying to" OR "unfortunate" OR "rejected" OR "moving forward" OR "interview" OR "interviews" OR "next steps" OR "submission" OR "applied" OR "interest" OR "registration") -subject:("Security code" OR "Verification code" OR "Your code" OR "one-time password" OR "OTP")'
+GMAIL_SEARCH_QUERY = 'subject:(application OR "thank you for applying" OR "received your application" OR "applying to" OR "unfortunate" OR "rejected" OR "moving forward" OR "interview" OR "interviews" OR "next steps" OR "submission" OR "applied" OR "interest" OR "registration" OR "acknowledgment" OR "receipt") -subject:("Security code" OR "Verification code" OR "Your code" OR "one-time password" OR "OTP")'
 
 class JobSyncAutomation:
     def __init__(self):
@@ -51,15 +51,18 @@ class JobSyncAutomation:
             res = requests.get(url, headers=self.notion_headers)
             if res.status_code == 200:
                 data = res.json()
-                sources = data.get('data_source_ids', [])
+                # Version 2025-09-03 uses 'data_sources' array of objects
+                sources = data.get('data_sources', [])
                 if sources:
-                    self.data_source_id = sources[0]
-                    print(f"🔗 Linked to Notion Data Source: {self.data_source_id}")
+                    self.data_source_id = sources[0].get('id')
+                    print(f"🔗 Linked to Notion Data Source: {self.data_source_id} ({sources[0].get('name')})")
                 else:
                     self.data_source_id = DATABASE_ID
+                    print(f"✅ Database is single-source or legacy. Using DATABASE_ID.")
             else:
                 print(f"⚠️ Could not fetch Notion database info ({res.status_code}). Falling back to DATABASE_ID.")
                 self.data_source_id = DATABASE_ID
+            sys.stdout.flush()
         except Exception as e:
             print(f"⚠️ Notion init error: {str(e)}")
             self.data_source_id = DATABASE_ID
