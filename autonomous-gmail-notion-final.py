@@ -42,6 +42,12 @@ class JobSyncAutomation:
         self.data_source_id = None # Discovered later
         self.creds = self.get_gmail_creds()
         self.gmail_service = build('gmail', 'v1', credentials=self.creds)
+        
+        # Get user email to create direct Gmail links
+        profile = self.gmail_service.users().getProfile(userId='me').execute()
+        self.user_email = profile.get('emailAddress')
+        print(f"📧 Authenticated as: {self.user_email}")
+        
         self._initialize_notion_source()
 
     def _initialize_notion_source(self):
@@ -212,7 +218,8 @@ class JobSyncAutomation:
                 received_date = datetime.now().isoformat()
 
             snippet = message.get('snippet', '').lower()
-            link = f"https://mail.google.com/mail/u/0/#inbox/{msg_id}"
+            # Use the specific user email in the link to ensure it opens in the correct account
+            link = f"https://mail.google.com/mail/u/{self.user_email}/#inbox/{msg_id}"
 
             # Advanced Status Detection
             status = "Applied"
@@ -290,9 +297,14 @@ class JobSyncAutomation:
             if len(results) > 0:
                 # UPDATE existing page
                 page_id = results[0]['id']
-                current_status = results[0]['properties'].get('Status', {}).get('select', {}).get('name')
+                current_props = results[0].get('properties', {})
+                current_status = current_props.get('Status', {}).get('select', {}).get('name')
+                current_link = current_props.get('Email Link', {}).get('url', '')
                 
-                if current_status != job['status']:
+                # Update if status changed OR if the link is in the old "/u/0/" format
+                link_outdated = "/u/0/" in current_link and self.user_email not in current_link
+                
+                if current_status != job['status'] or link_outdated:
                     update_url = f"https://api.notion.com/v1/pages/{page_id}"
                     update_payload = {
                         "properties": {
@@ -303,7 +315,10 @@ class JobSyncAutomation:
                         }
                     }
                     requests.patch(update_url, headers=self.notion_headers, json=update_payload)
-                    print(f"  🔄 Updated Status: {job['company']}")
+                    if link_outdated:
+                        print(f"  🔗 Fixed Link: {job['company']}")
+                    else:
+                        print(f"  🔄 Updated Status: {job['company']}")
                 return False 
 
             # CREATE new page
