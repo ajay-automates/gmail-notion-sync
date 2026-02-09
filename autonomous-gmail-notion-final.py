@@ -30,7 +30,7 @@ DATABASE_ID = os.getenv("DATABASE_ID")
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 # Search query to find job application, rejection, and interview emails
-GMAIL_SEARCH_QUERY = 'subject:(application OR "thank you for applying" OR "received your application" OR "applying to" OR "unfortunate" OR "rejected" OR "moving forward" OR "interview" OR "interviews" OR "next steps") -subject:("Security code" OR "Verification code" OR "Your code" OR "one-time password" OR "OTP")'
+GMAIL_SEARCH_QUERY = 'subject:(application OR "thank you for applying" OR "received your application" OR "applying to" OR "unfortunate" OR "rejected" OR "moving forward" OR "interview" OR "interviews" OR "next steps" OR "submission" OR "applied" OR "interest" OR "registration") -subject:("Security code" OR "Verification code" OR "Your code" OR "one-time password" OR "OTP")'
 
 class JobSyncAutomation:
     def __init__(self):
@@ -291,6 +291,10 @@ class JobSyncAutomation:
             if i % 20 == 0 and i > 0:
                 print(f"  ...checking/syncing {i}/{len(jobs)} to Notion")
                 sys.stdout.flush()
+            
+            # Debug: print subject being processed (first 50 only to avoid spam)
+            if i < 50:
+                print(f"  🔍 Checking: {job['subject'][:60]}...")
                 
             if self.add_to_notion(job):
                 print(f"✅ Synced: {job['company']} - {job['title']}")
