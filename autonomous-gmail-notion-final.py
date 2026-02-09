@@ -191,9 +191,9 @@ class JobSyncAutomation:
             return None
 
     def add_to_notion(self, job: Dict) -> bool:
-        """Add job to Notion database if it doesn't already exist"""
+        """Add job to Notion or UPDATE if it already exists"""
         
-        # Check for duplicates (Search by Subject)
+        # Check for existing record (Search by Subject)
         query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
         query_payload = {
             "filter": {
@@ -202,16 +202,12 @@ class JobSyncAutomation:
             }
         }
         
-        check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload)
-        if check_res.status_code == 200 and len(check_res.json().get('results', [])) > 0:
-            # Skip if already exists
-            return False
-
-        # Create new page
-        url = "https://api.notion.com/v1/pages"
-        payload = {
-            "parent": {"database_id": DATABASE_ID},
-            "properties": {
+        try:
+            check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload)
+            results = check_res.json().get('results', [])
+            
+            # Prepare common properties
+            properties = {
                 "Title": {"title": [{"text": {"content": job['title']}}]},
                 "Company": {"rich_text": [{"text": {"content": job['company']}}]},
                 "Email From": {"rich_text": [{"text": {"content": job['email_from']}}]},
@@ -223,13 +219,41 @@ class JobSyncAutomation:
                 "Next Action": {"rich_text": [{"text": {"content": job['next_action']}}]},
                 "Action Date": {"date": {"start": job['action_date']}}
             }
-        }
 
-        try:
+            if len(results) > 0:
+                # UPDATE existing page
+                page_id = results[0]['id']
+                current_status = results[0]['properties'].get('Status', {}).get('select', {}).get('name')
+                
+                # Only update if the status is "higher" priority (e.g., don't overwrite "Interview" with "Applied")
+                # For now, let's just update if it's different to be safe
+                if current_status != job['status']:
+                    update_url = f"https://api.notion.com/v1/pages/{page_id}"
+                    # Only update Status, Next Action, and Preview
+                    update_payload = {
+                        "properties": {
+                            "Status": {"select": {"name": job['status']}},
+                            "Next Action": {"rich_text": [{"text": {"content": job['next_action']}}]},
+                            "Email Preview": {"rich_text": [{"text": {"content": job['email_preview'][:2000]}}]},
+                            "Email Link": {"url": job['email_link']}
+                        }
+                    }
+                    requests.patch(update_url, headers=self.notion_headers, json=update_payload)
+                    print(f"🔄 Updated Status: {job['company']} -> {job['status']}")
+                return False # Treated as "already exists" but updated
+
+            # CREATE new page
+            url = "https://api.notion.com/v1/pages"
+            payload = {
+                "parent": {"database_id": DATABASE_ID},
+                "properties": properties
+            }
+
             response = requests.post(url, headers=self.notion_headers, json=payload, timeout=10)
             return response.status_code == 200
+            
         except Exception as e:
-            print(f"Error adding {job['company']}: {str(e)}")
+            print(f"Error handling Notion record for {job['company']}: {str(e)}")
             return False
 
     def sync_cycle(self, count=500):
