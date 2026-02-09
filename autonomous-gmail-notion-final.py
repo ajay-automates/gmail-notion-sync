@@ -49,28 +49,24 @@ class JobSyncAutomation:
         try:
             url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
             res = requests.get(url, headers=self.notion_headers)
+            print(f"📊 Notion DB Info Status: {res.status_code}")
             if res.status_code == 200:
                 data = res.json()
+                print(f"DEBUG: Notion DB Keys: {list(data.keys())}")
                 
-                # Try multiple possible property names based on API versions
-                sources = data.get('data_sources') or data.get('child_data_source_ids')
+                # Check for sources in multiple locations
+                sources = data.get('data_sources') or data.get('child_data_source_ids') or data.get('sources')
                 
                 if sources and len(sources) > 0:
-                    # If it's the new data_sources array of objects
-                    if isinstance(sources[0], dict):
-                        self.data_source_id = sources[0].get('id')
-                        name = sources[0].get('name', 'Unknown')
-                    # If it's a simple list of IDs (child_data_source_ids)
-                    else:
-                        self.data_source_id = sources[0]
-                        name = "Legacy/Direct"
-                        
+                    src = sources[0]
+                    self.data_source_id = src.get('id') if isinstance(src, dict) else src
+                    name = src.get('name', 'Unknown') if isinstance(src, dict) else "Direct"
                     print(f"🔗 Linked to Notion Source: {self.data_source_id} ({name})")
                 else:
                     self.data_source_id = DATABASE_ID
                     print(f"✅ Normal database detected. Using DATABASE_ID.")
             else:
-                print(f"⚠️ Could not fetch Notion info ({res.status_code}). Response: {res.text[:200]}")
+                print(f"⚠️ Could not fetch Notion info ({res.status_code}). Response: {res.text[:500]}")
                 self.data_source_id = DATABASE_ID
             sys.stdout.flush()
         except Exception as e:
