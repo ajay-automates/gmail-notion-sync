@@ -37,10 +37,32 @@ class JobSyncAutomation:
         self.notion_headers = {
             "Authorization": f"Bearer {NOTION_TOKEN}",
             "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
+            "Notion-Version": "2025-09-03" # Updated to support multi-source databases
         }
+        self.data_source_id = None # Discovered later
         self.creds = self.get_gmail_creds()
         self.gmail_service = build('gmail', 'v1', credentials=self.creds)
+        self._initialize_notion_source()
+
+    def _initialize_notion_source(self):
+        """Discover the correct data_source_id for multi-source databases"""
+        try:
+            url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
+            res = requests.get(url, headers=self.notion_headers)
+            if res.status_code == 200:
+                data = res.json()
+                sources = data.get('data_source_ids', [])
+                if sources:
+                    self.data_source_id = sources[0]
+                    print(f"🔗 Linked to Notion Data Source: {self.data_source_id}")
+                else:
+                    self.data_source_id = DATABASE_ID
+            else:
+                print(f"⚠️ Could not fetch Notion database info ({res.status_code}). Falling back to DATABASE_ID.")
+                self.data_source_id = DATABASE_ID
+        except Exception as e:
+            print(f"⚠️ Notion init error: {str(e)}")
+            self.data_source_id = DATABASE_ID
 
     def get_gmail_creds(self):
         """Manages Gmail OAuth2 credentials with Env Var support for Railway"""
@@ -210,10 +232,14 @@ class JobSyncAutomation:
             return None
 
     def add_to_notion(self, job: Dict) -> bool:
-        """Add job to Notion or UPDATE if it already exists"""
+        """Add job to Notion or UPDATE if it already exists (Compatible with 2025-09-03 API)"""
         
-        # Check for existing record (Search by Subject)
-        query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+        # Determine the correct query URL (data_sources vs databases)
+        if self.data_source_id != DATABASE_ID:
+            query_url = f"https://api.notion.com/v1/data_sources/{self.data_source_id}/query"
+        else:
+            query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+            
         query_payload = {
             "filter": {
                 "property": "Subject",
@@ -225,11 +251,13 @@ class JobSyncAutomation:
             check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload)
             if check_res.status_code != 200:
                 print(f"  ❌ Notion Query Error ({check_res.status_code}): {check_res.text}")
+                # Fallback: if data_source_id fails, try DATABASE_ID? 
+                # No, better to log and return False to avoid infinite errors.
                 return False
                 
             results = check_res.json().get('results', [])
             
-            # Prepare common properties
+            # Prepare properties
             properties = {
                 "Title": {"title": [{"text": {"content": job['title']}}]},
                 "Company": {"rich_text": [{"text": {"content": job['company']}}]},
@@ -264,8 +292,15 @@ class JobSyncAutomation:
 
             # CREATE new page
             url = "https://api.notion.com/v1/pages"
+            
+            # Parent must match the source type
+            if self.data_source_id != DATABASE_ID:
+                parent = {"data_source_id": self.data_source_id}
+            else:
+                parent = {"database_id": DATABASE_ID}
+                
             payload = {
-                "parent": {"database_id": DATABASE_ID},
+                "parent": parent,
                 "properties": properties
             }
 
