@@ -275,13 +275,18 @@ class JobSyncAutomation:
             print(f"Error handling Notion record for {job['company']}: {str(e)}")
             return False
 
-    def sync_cycle(self, count=500):
+    def sync_cycle(self, count=2000):
         """The main sync logic to be run on schedule"""
         print(f"\n⏱️  Sync started: {datetime.now().strftime('%H:%M:%S')}")
         jobs = self.fetch_emails(count=count)
         
         added_count = 0
-        for job in jobs:
+        print(f"🔄 Starting Notion sync for {len(jobs)} entries...")
+        for i, job in enumerate(jobs):
+            if i % 20 == 0 and i > 0:
+                print(f"  ...checking/syncing {i}/{len(jobs)} to Notion")
+                sys.stdout.flush()
+                
             if self.add_to_notion(job):
                 print(f"✅ Synced: {job['company']} - {job['title']}")
                 added_count += 1
