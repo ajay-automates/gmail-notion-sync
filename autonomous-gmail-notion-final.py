@@ -6,6 +6,7 @@ Syncs job application emails from Gmail to Notion automatically.
 """
 
 import os
+import sys
 import time
 import json
 import base64
@@ -132,8 +133,13 @@ class JobSyncAutomation:
             else:
                 # Try to extract company from sender email domain
                 if "<" in sender:
-                    email_domain = sender.split("<")[-1].replace(">", "").split("@")[-1]
-                    company = email_domain.split(".")[0].capitalize()
+                    email_domain = sender.split("<")[-1].replace(">", "").split("@")[-1].lower()
+                    # Filter out common generic domains
+                    generic_domains = ["gmail.com", "outlook.com", "yahoo.com", "icloud.com", "me.com", "mail.com"]
+                    if email_domain not in generic_domains:
+                        company = email_domain.split(".")[0].capitalize()
+                    else:
+                        company = "Referral/Direct"
 
             # Date formatting for Notion
             try:
@@ -272,6 +278,12 @@ def main():
         print("\n👋 Automation stopped by user.")
     except Exception as e:
         print(f"\n❌ CRITICAL ERROR: {str(e)}")
+        sys.stdout.flush()
+        # Sleep before exiting to avoid aggressive restart loops
+        time.sleep(10)
+        sys.exit(1)
 
 if __name__ == "__main__":
+    # Ensure logs are flushed immediately
+    sys.stdout.reconfigure(line_buffering=True)
     main()
