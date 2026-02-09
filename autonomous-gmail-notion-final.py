@@ -223,6 +223,10 @@ class JobSyncAutomation:
         
         try:
             check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload)
+            if check_res.status_code != 200:
+                print(f"  ❌ Notion Query Error ({check_res.status_code}): {check_res.text}")
+                return False
+                
             results = check_res.json().get('results', [])
             
             # Prepare common properties
@@ -244,11 +248,8 @@ class JobSyncAutomation:
                 page_id = results[0]['id']
                 current_status = results[0]['properties'].get('Status', {}).get('select', {}).get('name')
                 
-                # Only update if the status is "higher" priority (e.g., don't overwrite "Interview" with "Applied")
-                # For now, let's just update if it's different to be safe
                 if current_status != job['status']:
                     update_url = f"https://api.notion.com/v1/pages/{page_id}"
-                    # Only update Status, Next Action, and Preview
                     update_payload = {
                         "properties": {
                             "Status": {"select": {"name": job['status']}},
@@ -258,8 +259,8 @@ class JobSyncAutomation:
                         }
                     }
                     requests.patch(update_url, headers=self.notion_headers, json=update_payload)
-                    print(f"🔄 Updated Status: {job['company']} -> {job['status']}")
-                return False # Treated as "already exists" but updated
+                    print(f"  🔄 Updated Status: {job['company']}")
+                return False 
 
             # CREATE new page
             url = "https://api.notion.com/v1/pages"
@@ -269,10 +270,14 @@ class JobSyncAutomation:
             }
 
             response = requests.post(url, headers=self.notion_headers, json=payload, timeout=10)
-            return response.status_code == 200
+            if response.status_code == 200:
+                return True
+            else:
+                print(f"  ❌ Notion Create Error ({response.status_code}): {response.text}")
+                return False
             
         except Exception as e:
-            print(f"Error handling Notion record for {job['company']}: {str(e)}")
+            print(f"  ❌ Exception for {job['company']}: {str(e)}")
             return False
 
     def sync_cycle(self, count=2000):
