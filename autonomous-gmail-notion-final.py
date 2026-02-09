@@ -82,21 +82,40 @@ class JobSyncAutomation:
         
         return creds
 
-    def fetch_emails(self, count=500) -> List[Dict]:
-        """Fetch emails matching the search query, up to a specific count"""
+    def fetch_emails(self, count=2000) -> List[Dict]:
+        """Fetch emails matching the search query, up to a specific count using pagination"""
         try:
-            results = self.gmail_service.users().messages().list(
-                userId='me', q=GMAIL_SEARCH_QUERY, maxResults=min(count, 500)
-            ).execute()
+            messages = []
+            next_page_token = None
             
-            messages = results.get('messages', [])
-            job_data = []
+            print(f"🔍 Searching Gmail for up to {count} matching emails...")
+            
+            while len(messages) < count:
+                max_results = min(count - len(messages), 500)
+                results = self.gmail_service.users().messages().list(
+                    userId='me', 
+                    q=GMAIL_SEARCH_QUERY, 
+                    maxResults=max_results,
+                    pageToken=next_page_token
+                ).execute()
+                
+                batch = results.get('messages', [])
+                if not batch:
+                    break
+                    
+                messages.extend(batch)
+                next_page_token = results.get('nextPageToken')
+                
+                if not next_page_token:
+                    break
 
-            print(f"🔍 Found {len(messages)} matching emails in Gmail. Starting extraction...")
+            job_data = []
+            print(f"� Found {len(messages)} potential emails. Starting extraction...")
 
             for i, msg in enumerate(messages):
-                if i % 10 == 0 and i > 0:
-                    print(f"  ...processed {i} emails")
+                if i % 25 == 0 and i > 0:
+                    print(f"  ...processed {i}/{len(messages)} emails")
+                    sys.stdout.flush()
                 
                 details = self.get_message_details(msg['id'])
                 if details:
@@ -282,9 +301,9 @@ def main():
     try:
         automator = JobSyncAutomation()
         
-        # Initial deep sync (fetch up to 500 historical emails)
-        print("📥 Running initial deep sync for historical data...")
-        automator.sync_cycle(count=500)
+        # Initial Mega sync (fetch up to 2000 historical emails)
+        print("📥 Running initial MEGA sync for widespread historical data...")
+        automator.sync_cycle(count=2000)
 
         # Subsequent periodic syncs (fetch last 50 only for speed)
         schedule.every(2).minutes.do(automator.sync_cycle, count=50)
