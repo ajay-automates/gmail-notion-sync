@@ -324,31 +324,64 @@ class JobSyncAutomation:
             print(f"  ❌ Exception for {job['company']}: {str(e)}")
             return False
 
-    def sync_cycle(self, count=2000):
-        """The main sync logic to be run on schedule"""
+    def sync_one_by_one(self, count=2000):
+        """Fetch and sync emails one by one to save memory and handle large batches"""
         print(f"\n⏱️  Sync started: {datetime.now().strftime('%H:%M:%S')}")
-        jobs = self.fetch_emails(count=count)
         
-        added_count = 0
-        print(f"🔄 Starting Notion sync for {len(jobs)} entries...")
-        for i, job in enumerate(jobs):
-            if i % 20 == 0 and i > 0:
-                print(f"  ...checking/syncing {i}/{len(jobs)} to Notion")
-                sys.stdout.flush()
+        try:
+            messages = []
+            next_page_token = None
             
-            # Debug: print subject being processed (first 50 only to avoid spam)
-            if i < 50:
-                print(f"  🔍 Checking: {job['subject'][:60]}...")
+            print(f"🔍 Searching Gmail for up to {count} matching emails...")
+            
+            while len(messages) < count:
+                max_results = min(count - len(messages), 500)
+                results = self.gmail_service.users().messages().list(
+                    userId='me', 
+                    q=GMAIL_SEARCH_QUERY, 
+                    maxResults=max_results,
+                    pageToken=next_page_token
+                ).execute()
                 
-            if self.add_to_notion(job):
-                print(f"✅ Synced: {job['company']} - {job['title']}")
-                added_count += 1
-                time.sleep(0.5) # Rate limiting for Notion API
-        
-        if added_count == 0:
-            print("  (No new job emails found)")
-        else:
-            print(f"✨ Successfully added {added_count} new entries.")
+                batch = results.get('messages', [])
+                if not batch:
+                    break
+                    
+                messages.extend(batch)
+                next_page_token = results.get('nextPageToken')
+                if not next_page_token:
+                    break
+
+            print(f"📝 Found {len(messages)} potential emails. Starting one-by-one sync...")
+            
+            added_count = 0
+            for i, msg in enumerate(messages):
+                if i % 25 == 0 and i > 0:
+                    print(f"  ...processed {i}/{len(messages)} emails")
+                    sys.stdout.flush()
+                
+                # Fetch details for just ONE message
+                job = self.get_message_details(msg['id'])
+                if job:
+                    # Sync to Notion immediately
+                    if self.add_to_notion(job):
+                        print(f"✅ Synced: {job['company']} - {job['title']}")
+                        added_count += 1
+                        time.sleep(0.5) # Rate limiting
+                
+                # The 'job' variable is overwritten in next iteration, allowing GC
+            
+            if added_count == 0:
+                print("  (No new job emails found)")
+            else:
+                print(f"✨ Successfully added {added_count} new entries.")
+
+        except Exception as e:
+            print(f"❌ Critical Sync Error: {str(e)}")
+
+    def sync_cycle(self, count=2000):
+        """Wrapper for the new one-by-one sync logic"""
+        self.sync_one_by_one(count=count)
 
 def main():
     print("\n" + "="*80)
