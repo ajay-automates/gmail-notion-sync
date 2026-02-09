@@ -171,13 +171,17 @@ class JobSyncAutomation:
             date_raw = next((h['value'] for h in headers if h['name'].lower() == 'date'), None)
             
             # Basic parsing of company and title from subject
-            # (Very simple logic, can be improved with AI/regex)
             company = "Unknown Company"
             title = subject
             
+            # Smart parsing logic
+            lower_subject = subject.lower()
             if " at " in subject:
-                parts = subject.split(" at ")
-                company = parts[-1].strip()
+                company = subject.split(" at ")[-1].strip()
+            elif " to " in subject:
+                company = subject.split(" to ")[-1].strip()
+            elif " in " in subject:
+                company = subject.split(" in ")[-1].strip()
             elif " - " in sender:
                 company = sender.split(" - ")[-1].strip()
             else:
@@ -185,11 +189,14 @@ class JobSyncAutomation:
                 if "<" in sender:
                     email_domain = sender.split("<")[-1].replace(">", "").split("@")[-1].lower()
                     # Filter out common generic domains
-                    generic_domains = ["gmail.com", "outlook.com", "yahoo.com", "icloud.com", "me.com", "mail.com"]
-                    if email_domain not in generic_domains:
+                    generic_domains = ["gmail.com", "outlook.com", "yahoo.com", "icloud.com", "me.com", "mail.com", "notifications.greenhouse.io", "ashbyhq.com", "lever.co"]
+                    if email_domain not in generic_domains and "." in email_domain:
                         company = email_domain.split(".")[0].capitalize()
                     else:
                         company = "Referral/Direct"
+            
+            # Clean up company name (remove punctuation at end)
+            company = company.rstrip("!.,")
 
             # Date formatting for Notion
             try:
