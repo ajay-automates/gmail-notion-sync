@@ -46,6 +46,24 @@ class JobSyncAutomation:
         print(f"📧 Authenticated as: {self.user_email}")
         
         self._initialize_notion_source()
+        self._discover_data_source()
+
+    def _discover_data_source(self):
+        """Fetch database to get the writable data_source_id for multi-source databases"""
+        self.data_source_id = None
+        try:
+            url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
+            res = requests.get(url, headers=self.notion_headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                data_sources = data.get("data_sources", [])
+                if data_sources:
+                    self.data_source_id = data_sources[0].get("id")
+                    print(f"🔗 Multi-source database detected. Using data source: {self.data_source_id}")
+                else:
+                    print("✅ Single-source database mode.")
+        except Exception as e:
+            print(f"⚠️ Could not discover data source: {str(e)}")
 
     def _initialize_notion_source(self):
         """Verify the Notion database is accessible"""
@@ -192,7 +210,10 @@ class JobSyncAutomation:
     def add_to_notion(self, job: Dict) -> bool:
         """Add job to Notion or update existing entry (deduplicates by Subject)"""
 
-        query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+        if self.data_source_id:
+            query_url = f"https://api.notion.com/v1/data_sources/{self.data_source_id}/query"
+        else:
+            query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
             
         query_payload = {
             "filter": {
@@ -256,8 +277,12 @@ class JobSyncAutomation:
 
             # CREATE new page
             url = "https://api.notion.com/v1/pages"
+            if self.data_source_id:
+                parent = {"data_source_id": self.data_source_id}
+            else:
+                parent = {"database_id": DATABASE_ID}
             payload = {
-                "parent": {"database_id": DATABASE_ID},
+                "parent": parent,
                 "properties": properties
             }
 
