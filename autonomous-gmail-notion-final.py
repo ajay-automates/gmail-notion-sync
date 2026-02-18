@@ -25,6 +25,16 @@ from googleapiclient.discovery import build
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID")
 
+# Validate required environment variables
+if not NOTION_TOKEN:
+    print("❌ ERROR: NOTION_TOKEN environment variable is not set")
+    print("   Set it in Railway → Variables → NOTION_TOKEN")
+    sys.exit(1)
+if not DATABASE_ID:
+    print("❌ ERROR: DATABASE_ID environment variable is not set")
+    print("   Set it in Railway → Variables → DATABASE_ID")
+    sys.exit(1)
+
 # Scopes for Gmail API
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
@@ -102,7 +112,11 @@ class JobSyncAutomation:
                     flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
                     creds = flow.run_local_server(port=0)
                 else:
-                    print("\n❌ ERROR: No Gmail credentials found (env or file)!")
+                    print("\n❌ ERROR: No Gmail credentials found!")
+                    print("   You need to run generate_token.py locally first:")
+                    print("   1. Download credentials.json from Google Cloud Console")
+                    print("   2. Run: python3 generate_token.py")
+                    print("   3. Copy the token JSON to Railway → Variables → GMAIL_TOKEN")
                     exit(1)
             
             # Save the credentials for next time (locally)
