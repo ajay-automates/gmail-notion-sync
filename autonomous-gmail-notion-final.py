@@ -35,7 +35,7 @@ class JobSyncAutomation:
         self.notion_headers = {
             "Authorization": f"Bearer {NOTION_TOKEN}",
             "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
+            "Notion-Version": "2025-09-03"
         }
         self.creds = self.get_gmail_creds()
         self.gmail_service = build('gmail', 'v1', credentials=self.creds)
