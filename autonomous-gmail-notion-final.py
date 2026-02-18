@@ -9,18 +9,16 @@ import os
 import sys
 import time
 import json
-import base64
 import schedule
 import requests
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 
 # Google API Libraries
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 # --- CONFIGURATION (Load from environment variables) ---
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
@@ -37,9 +35,8 @@ class JobSyncAutomation:
         self.notion_headers = {
             "Authorization": f"Bearer {NOTION_TOKEN}",
             "Content-Type": "application/json",
-            "Notion-Version": "2025-09-03" # Updated to support multi-source databases
+            "Notion-Version": "2022-06-28"
         }
-        self.data_source_id = None # Discovered later
         self.creds = self.get_gmail_creds()
         self.gmail_service = build('gmail', 'v1', credentials=self.creds)
         
@@ -51,33 +48,17 @@ class JobSyncAutomation:
         self._initialize_notion_source()
 
     def _initialize_notion_source(self):
-        """Discover the correct data_source_id for multi-source databases"""
+        """Verify the Notion database is accessible"""
         try:
             url = f"https://api.notion.com/v1/databases/{DATABASE_ID}"
-            res = requests.get(url, headers=self.notion_headers)
-            print(f"📊 Notion DB Info Status: {res.status_code}")
+            res = requests.get(url, headers=self.notion_headers, timeout=10)
             if res.status_code == 200:
-                data = res.json()
-                print(f"DEBUG: Notion DB Keys: {list(data.keys())}")
-                
-                # Check for sources in multiple locations
-                sources = data.get('data_sources') or data.get('child_data_source_ids') or data.get('sources')
-                
-                if sources and len(sources) > 0:
-                    src = sources[0]
-                    self.data_source_id = src.get('id') if isinstance(src, dict) else src
-                    name = src.get('name', 'Unknown') if isinstance(src, dict) else "Direct"
-                    print(f"🔗 Linked to Notion Source: {self.data_source_id} ({name})")
-                else:
-                    self.data_source_id = DATABASE_ID
-                    print(f"✅ Normal database detected. Using DATABASE_ID.")
+                print(f"✅ Notion database connected.")
             else:
-                print(f"⚠️ Could not fetch Notion info ({res.status_code}). Response: {res.text[:500]}")
-                self.data_source_id = DATABASE_ID
+                print(f"⚠️ Notion database check failed ({res.status_code}): {res.text[:500]}")
             sys.stdout.flush()
         except Exception as e:
-            print(f"⚠️ Notion discovery exception: {str(e)}")
-            self.data_source_id = DATABASE_ID
+            print(f"⚠️ Notion connectivity check exception: {str(e)}")
 
     def get_gmail_creds(self):
         """Manages Gmail OAuth2 credentials with Env Var support for Railway"""
@@ -119,51 +100,6 @@ class JobSyncAutomation:
         
         return creds
 
-    def fetch_emails(self, count=2000) -> List[Dict]:
-        """Fetch emails matching the search query, up to a specific count using pagination"""
-        try:
-            messages = []
-            next_page_token = None
-            
-            print(f"🔍 Searching Gmail for up to {count} matching emails...")
-            
-            while len(messages) < count:
-                max_results = min(count - len(messages), 500)
-                results = self.gmail_service.users().messages().list(
-                    userId='me', 
-                    q=GMAIL_SEARCH_QUERY, 
-                    maxResults=max_results,
-                    pageToken=next_page_token
-                ).execute()
-                
-                batch = results.get('messages', [])
-                if not batch:
-                    break
-                    
-                messages.extend(batch)
-                next_page_token = results.get('nextPageToken')
-                
-                if not next_page_token:
-                    break
-
-            job_data = []
-            print(f"� Found {len(messages)} potential emails. Starting extraction...")
-
-            for i, msg in enumerate(messages):
-                if i % 25 == 0 and i > 0:
-                    print(f"  ...processed {i}/{len(messages)} emails")
-                    sys.stdout.flush()
-                
-                details = self.get_message_details(msg['id'])
-                if details:
-                    job_data.append(details)
-            
-            return job_data
-
-        except HttpError as error:
-            print(f"An error occurred: {error}")
-            return []
-
     def get_message_details(self, msg_id: str) -> Optional[Dict]:
         """Extract details from a specific Gmail message"""
         try:
@@ -179,9 +115,8 @@ class JobSyncAutomation:
             # Basic parsing of company and title from subject
             company = "Unknown Company"
             title = subject
-            
+
             # Smart parsing logic
-            lower_subject = subject.lower()
             if " at " in subject:
                 company = subject.split(" at ")[-1].strip()
             elif " to " in subject:
@@ -205,17 +140,17 @@ class JobSyncAutomation:
             company = company.rstrip("!.,")
 
             # Date formatting for Notion
-            try:
-                # Simple fallback date if parsing fails
-                received_date = datetime.now().isoformat()
-                if date_raw:
-                    # Clean the date string (remove timezone names in parentheses)
-                    clean_date = date_raw.split(' (')[0]
-                    # Fri, 07 Feb 2025 15:30:10 +0000
-                    parsed_date = datetime.strptime(clean_date[:25].strip(), "%a, %d %b %Y %H:%M:%S")
-                    received_date = parsed_date.isoformat()
-            except Exception:
-                received_date = datetime.now().isoformat()
+            received_date = datetime.now().isoformat()
+            if date_raw:
+                # Remove timezone name in parentheses, e.g. "(UTC)"
+                clean_date = date_raw.split(' (')[0].strip()
+                for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S"]:
+                    try:
+                        parsed_date = datetime.strptime(clean_date, fmt)
+                        received_date = parsed_date.isoformat()
+                        break
+                    except ValueError:
+                        continue
 
             snippet = message.get('snippet', '').lower()
             # Use the specific user email in the link to ensure it opens in the correct account
@@ -255,13 +190,9 @@ class JobSyncAutomation:
             return None
 
     def add_to_notion(self, job: Dict) -> bool:
-        """Add job to Notion or UPDATE if it already exists (Compatible with 2025-09-03 API)"""
-        
-        # Determine the correct query URL (data_sources vs databases)
-        if self.data_source_id != DATABASE_ID:
-            query_url = f"https://api.notion.com/v1/data_sources/{self.data_source_id}/query"
-        else:
-            query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+        """Add job to Notion or update existing entry (deduplicates by Subject)"""
+
+        query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
             
         query_payload = {
             "filter": {
@@ -271,14 +202,14 @@ class JobSyncAutomation:
         }
         
         try:
-            check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload)
+            check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload, timeout=10)
             if check_res.status_code != 200:
                 print(f"  ❌ Notion Query Error ({check_res.status_code}): {check_res.text}")
-                # Fallback: if data_source_id fails, try DATABASE_ID? 
-                # No, better to log and return False to avoid infinite errors.
-                return False
-                
-            results = check_res.json().get('results', [])
+                # Query failed - fall through to CREATE to avoid silently dropping the email.
+                # This may rarely cause a duplicate, but is better than losing data.
+                results = []
+            else:
+                results = check_res.json().get('results', [])
             
             # Prepare properties
             properties = {
@@ -314,24 +245,19 @@ class JobSyncAutomation:
                             "Email Link": {"url": job['email_link']}
                         }
                     }
-                    requests.patch(update_url, headers=self.notion_headers, json=update_payload)
-                    if link_outdated:
+                    patch_res = requests.patch(update_url, headers=self.notion_headers, json=update_payload, timeout=10)
+                    if patch_res.status_code != 200:
+                        print(f"  ❌ Notion Update Error ({patch_res.status_code}): {patch_res.text}")
+                    elif link_outdated:
                         print(f"  🔗 Fixed Link: {job['company']}")
                     else:
                         print(f"  🔄 Updated Status: {job['company']}")
-                return False 
+                return False
 
             # CREATE new page
             url = "https://api.notion.com/v1/pages"
-            
-            # Parent must match the source type
-            if self.data_source_id != DATABASE_ID:
-                parent = {"data_source_id": self.data_source_id}
-            else:
-                parent = {"database_id": DATABASE_ID}
-                
             payload = {
-                "parent": parent,
+                "parent": {"database_id": DATABASE_ID},
                 "properties": properties
             }
 
@@ -389,8 +315,8 @@ class JobSyncAutomation:
                     if self.add_to_notion(job):
                         print(f"✅ Synced: {job['company']} - {job['title']}")
                         added_count += 1
-                        time.sleep(0.5) # Rate limiting
-                
+                    time.sleep(0.5)  # Rate limit every processed email, not just new ones
+
                 # The 'job' variable is overwritten in next iteration, allowing GC
             
             if added_count == 0:
