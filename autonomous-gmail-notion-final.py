@@ -37,7 +37,7 @@ class JobSyncAutomation:
         self.notion_headers = {
             "Authorization": f"Bearer {NOTION_TOKEN}",
             "Content-Type": "application/json",
-            "Notion-Version": "2025-09-03" # Updated to support multi-source databases
+            "Notion-Version": "2022-06-28"
         }
         self.data_source_id = None # Discovered later
         self.creds = self.get_gmail_creds()
@@ -205,17 +205,17 @@ class JobSyncAutomation:
             company = company.rstrip("!.,")
 
             # Date formatting for Notion
-            try:
-                # Simple fallback date if parsing fails
-                received_date = datetime.now().isoformat()
-                if date_raw:
-                    # Clean the date string (remove timezone names in parentheses)
-                    clean_date = date_raw.split(' (')[0]
-                    # Fri, 07 Feb 2025 15:30:10 +0000
-                    parsed_date = datetime.strptime(clean_date[:25].strip(), "%a, %d %b %Y %H:%M:%S")
-                    received_date = parsed_date.isoformat()
-            except Exception:
-                received_date = datetime.now().isoformat()
+            received_date = datetime.now().isoformat()
+            if date_raw:
+                # Remove timezone name in parentheses, e.g. "(UTC)"
+                clean_date = date_raw.split(' (')[0].strip()
+                for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S"]:
+                    try:
+                        parsed_date = datetime.strptime(clean_date, fmt)
+                        received_date = parsed_date.isoformat()
+                        break
+                    except ValueError:
+                        continue
 
             snippet = message.get('snippet', '').lower()
             # Use the specific user email in the link to ensure it opens in the correct account
@@ -274,11 +274,11 @@ class JobSyncAutomation:
             check_res = requests.post(query_url, headers=self.notion_headers, json=query_payload)
             if check_res.status_code != 200:
                 print(f"  ❌ Notion Query Error ({check_res.status_code}): {check_res.text}")
-                # Fallback: if data_source_id fails, try DATABASE_ID? 
-                # No, better to log and return False to avoid infinite errors.
-                return False
-                
-            results = check_res.json().get('results', [])
+                # Query failed - fall through to CREATE to avoid silently dropping the email.
+                # This may rarely cause a duplicate, but is better than losing data.
+                results = []
+            else:
+                results = check_res.json().get('results', [])
             
             # Prepare properties
             properties = {
@@ -314,12 +314,14 @@ class JobSyncAutomation:
                             "Email Link": {"url": job['email_link']}
                         }
                     }
-                    requests.patch(update_url, headers=self.notion_headers, json=update_payload)
-                    if link_outdated:
+                    patch_res = requests.patch(update_url, headers=self.notion_headers, json=update_payload, timeout=10)
+                    if patch_res.status_code != 200:
+                        print(f"  ❌ Notion Update Error ({patch_res.status_code}): {patch_res.text}")
+                    elif link_outdated:
                         print(f"  🔗 Fixed Link: {job['company']}")
                     else:
                         print(f"  🔄 Updated Status: {job['company']}")
-                return False 
+                return False
 
             # CREATE new page
             url = "https://api.notion.com/v1/pages"
