@@ -16,6 +16,7 @@ from typing import Dict, Optional
 
 # Google API Libraries
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -77,7 +78,17 @@ class JobSyncAutomation:
         # If there are no (valid) credentials available, let the user log in.
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                except RefreshError:
+                    raise RuntimeError(
+                        "Gmail token has been revoked or expired permanently (invalid_grant).\n"
+                        "To fix:\n"
+                        "  1. Run this script locally to complete the OAuth flow in your browser\n"
+                        "  2. Copy the contents of the generated token.json\n"
+                        "  3. Update the GMAIL_TOKEN environment variable in Railway\n"
+                        "  4. Redeploy the service"
+                    )
             else:
                 # 3. Try loading Credentials from Environment Variable
                 env_creds = os.getenv("GMAIL_CREDENTIALS")
@@ -358,10 +369,17 @@ def main():
             
     except KeyboardInterrupt:
         print("\n👋 Automation stopped by user.")
+    except RuntimeError as e:
+        # RuntimeError is raised for unrecoverable config problems (e.g. revoked token).
+        # Sleep for a long time before exiting so Railway doesn't rapid-loop restarts.
+        print(f"\n❌ CONFIGURATION ERROR: {str(e)}")
+        print("\n⏸️  Pausing 1 hour before exit to prevent restart loop...")
+        sys.stdout.flush()
+        time.sleep(3600)
+        sys.exit(1)
     except Exception as e:
         print(f"\n❌ CRITICAL ERROR: {str(e)}")
         sys.stdout.flush()
-        # Sleep before exiting to avoid aggressive restart loops
         time.sleep(10)
         sys.exit(1)
 
